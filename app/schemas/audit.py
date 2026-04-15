@@ -1,0 +1,26 @@
+"""Audit log DTOs."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
+
+
+class AuditEntryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    actor_id: uuid.UUID | None
+    action: str
+    resource_type: str
+    resource_id: str
+    details: dict[str, Any]
+    created_at: datetime
+
+
+class AuditListRead(BaseModel):
+    items: list[AuditEntryRead]
+    total: int

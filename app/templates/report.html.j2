@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Report {{ case_id }} v{{ version }}</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 20mm 18mm 22mm 18mm;
+        @bottom-left {
+          content: "CONFIDENTIAL — {{ case_id }}";
+          font-size: 9pt;
+          color: #444;
+        }
+        @bottom-right {
+          content: "Page " counter(page) " of " counter(pages);
+          font-size: 9pt;
+          color: #444;
+        }
+      }
+      body {
+        font-family: "DejaVu Sans", "Helvetica", sans-serif;
+        font-size: 10.5pt;
+        color: #111;
+        line-height: 1.45;
+      }
+      h1 {
+        font-size: 18pt;
+        margin: 0 0 4mm 0;
+      }
+      h2 {
+        font-size: 13pt;
+        margin: 6mm 0 2mm 0;
+        border-bottom: 1px solid #999;
+        padding-bottom: 1mm;
+      }
+      h3 {
+        font-size: 11pt;
+        margin: 4mm 0 1mm 0;
+      }
+      .meta {
+        font-size: 9pt;
+        color: #555;
+        margin-bottom: 6mm;
+      }
+      .meta div {
+        margin-bottom: 0.5mm;
+      }
+      table.kv {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 2mm;
+      }
+      table.kv th,
+      table.kv td {
+        text-align: left;
+        padding: 1.5mm 2mm;
+        border: 0.3mm solid #ccc;
+        vertical-align: top;
+      }
+      table.kv th {
+        background: #f0f0f0;
+        width: 32%;
+        font-weight: 600;
+      }
+      ul.values {
+        margin: 0;
+        padding-left: 4mm;
+      }
+      .empty {
+        color: #888;
+        font-style: italic;
+      }
+      .soft-target {
+        border: 0.3mm solid #bbb;
+        padding: 2mm 3mm;
+        margin: 2mm 0;
+        page-break-inside: avoid;
+      }
+      .watermark {
+        position: fixed;
+        top: 40%;
+        left: 10%;
+        font-size: 60pt;
+        color: rgba(200, 0, 0, 0.07);
+        transform: rotate(-25deg);
+        z-index: -1;
+        font-weight: 700;
+      }
+      .summary {
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="watermark">CONFIDENTIAL</div>
+
+    <h1>Investigation Report</h1>
+    <div class="meta">
+      <div><strong>Case ID:</strong> {{ case_id }}</div>
+      <div><strong>Report ID:</strong> {{ report_id }}</div>
+      <div><strong>Version:</strong> {{ version }}</div>
+      <div><strong>Created by:</strong> {{ creator_email }}</div>
+      <div><strong>Created at:</strong> {{ created_at }}</div>
+      <div><strong>Generated at:</strong> {{ generated_at }}</div>
+    </div>
+
+    <h2>Primary Target</h2>
+    {% set pt = payload.primary_target %}
+    <table class="kv">
+      <tr>
+        <th>Name</th>
+        <td>{{ pt.name or '—' }}</td>
+      </tr>
+      <tr>
+        <th>IMEI numbers</th>
+        <td>
+          {% if pt.imei_numbers %}
+            <ul class="values">
+              {% for v in pt.imei_numbers %}<li>{{ v }}</li>{% endfor %}
+            </ul>
+          {% else %}
+            <span class="empty">none</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Phone numbers</th>
+        <td>
+          {% if pt.phone_numbers %}
+            <ul class="values">
+              {% for v in pt.phone_numbers %}<li>{{ v }}</li>{% endfor %}
+            </ul>
+          {% else %}
+            <span class="empty">none</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Location</th>
+        <td>{{ pt.location or '—' }}</td>
+      </tr>
+      <tr>
+        <th>Coordinates</th>
+        <td>
+          {% if pt.coordinates %}
+            {{ "%.6f"|format(pt.coordinates.latitude) }},
+            {{ "%.6f"|format(pt.coordinates.longitude) }}
+          {% else %}
+            <span class="empty">none</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% if pt.notes %}
+        <tr>
+          <th>Notes</th>
+          <td class="summary">{{ pt.notes }}</td>
+        </tr>
+      {% endif %}
+    </table>
+
+    <h2>Soft Targets</h2>
+    {% if payload.soft_targets %}
+      {% for t in payload.soft_targets %}
+        <div class="soft-target">
+          <h3>Soft target #{{ loop.index }}</h3>
+          <table class="kv">
+            <tr>
+              <th>Phone</th>
+              <td>{{ t.phone or '—' }}</td>
+            </tr>
+            <tr>
+              <th>Location</th>
+              <td>{{ t.location or '—' }}</td>
+            </tr>
+            <tr>
+              <th>Coordinates</th>
+              <td>
+                {% if t.coordinates %}
+                  {{ "%.6f"|format(t.coordinates.latitude) }},
+                  {{ "%.6f"|format(t.coordinates.longitude) }}
+                {% else %}
+                  <span class="empty">none</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% if t.notes %}
+              <tr>
+                <th>Notes</th>
+                <td class="summary">{{ t.notes }}</td>
+              </tr>
+            {% endif %}
+          </table>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="empty">No soft targets recorded.</p>
+    {% endif %}
+
+    {% if payload.summary %}
+      <h2>Summary</h2>
+      <div class="summary">{{ payload.summary }}</div>
+    {% endif %}
+  </body>
+</html>
