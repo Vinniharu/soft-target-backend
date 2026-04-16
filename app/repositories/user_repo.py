@@ -35,8 +35,12 @@ class UserRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(self, *, email: str, password_hash: str, role: UserRole) -> User:
-        user = User(email=email, password_hash=password_hash, role=role)
+    async def create(
+        self, *, email: str, password_hash: str, name: str, role: UserRole
+    ) -> User:
+        user = User(
+            email=email, password_hash=password_hash, name=name, role=role
+        )
         self._session.add(user)
         try:
             await self._session.flush()

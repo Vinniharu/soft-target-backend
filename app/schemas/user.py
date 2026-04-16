@@ -15,12 +15,14 @@ class UserCreate(BaseModel):
 
     email: EmailStr
     password: str = Field(min_length=12, max_length=128)
+    name: str = Field(min_length=1, max_length=100)
     role: UserRole = UserRole.user
 
 
 class UserUpdate(BaseModel):
     email: EmailStr | None = None
     password: str | None = Field(default=None, min_length=12, max_length=128)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     role: UserRole | None = None
 
 
@@ -29,6 +31,7 @@ class UserRead(BaseModel):
 
     id: uuid.UUID
     email: EmailStr
+    name: str
     role: UserRole
     created_at: datetime
     updated_at: datetime

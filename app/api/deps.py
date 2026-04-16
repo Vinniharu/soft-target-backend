@@ -16,7 +16,6 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.core.rate_limit import SlidingWindowRateLimiter
 from app.core.security import TokenError, decode_access_token
 from app.models.user import User, UserRole
 from app.repositories.audit_repo import AuditRepository
@@ -46,10 +45,6 @@ def get_filestore(request: Request) -> FileStore:
 
 def get_pdf_service(request: Request) -> PDFService:
     return request.app.state.pdf_service  # type: ignore[no-any-return]
-
-
-def get_login_rate_limiter(request: Request) -> SlidingWindowRateLimiter:
-    return request.app.state.login_rate_limiter  # type: ignore[no-any-return]
 
 
 async def get_session(

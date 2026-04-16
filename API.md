@@ -7,10 +7,9 @@ Reference for the Next.js frontend (or any client) that talks to this API.
 | Environment | URL |
 |-------------|-----|
 | Local dev   | `http://localhost:8000` |
-| VPS (current) | `http://<vps-ip>:4382` |
-| Production (future) | `https://api.yourdomain.com` |
+| VPS (current) | `http://41.242.54.70:4382` |
 
-All endpoints live under `/api/v1`. Example: `http://<vps-ip>:4382/api/v1/auth/login`.
+All endpoints live under `/api/v1`. Example: `http://41.242.54.70:4382/api/v1/auth/login`.
 
 ---
 
@@ -72,7 +71,6 @@ Validation errors (422) include field-level details:
 | 404  | Resource doesn't exist or has been soft-deleted |
 | 409  | Conflict (e.g. email already registered) |
 | 422  | Pydantic validation failed |
-| 429  | Too many requests (login rate limit only) |
 | 500  | Internal error — check server logs |
 
 The backend never returns stack traces or database internals to the client.
@@ -98,7 +96,7 @@ Public. No auth required.
 
 #### `POST /api/v1/auth/login`
 
-Public. Rate-limited to **5 attempts per 15 minutes per IP**.
+Public.
 
 **Request**
 ```json
@@ -114,15 +112,15 @@ Public. Rate-limited to **5 attempts per 15 minutes per IP**.
   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "refresh_token": "pXzA1BcD2EfG3HiJ4KlMnO5PqRsT6UvW7XyZ",
   "token_type": "bearer",
-  "expires_in": 900
+  "expires_in": 900,
+  "role": "user"
 }
 ```
 
-`expires_in` is seconds until the access token expires (900 = 15 min).
+`expires_in` is seconds until the access token expires (900 = 15 min). `role` is `"user"` or `"admin"` and lets the frontend pick the right post-login landing page without a follow-up call.
 
 **Errors**
 - `401` — invalid email or password (same message either way — doesn't leak account existence)
-- `429` — rate limit exceeded
 
 ---
 
@@ -139,6 +137,28 @@ Public.
 
 **Errors**
 - `401` — refresh token invalid, expired, or already used → force re-login
+
+---
+
+#### `GET /api/v1/auth/me`
+
+Returns the currently-authenticated user. Requires `Authorization: Bearer <access_token>`.
+
+**Response 200**
+```json
+{
+  "id": "uuid",
+  "email": "investigator@example.com",
+  "name": "Alice Investigator",
+  "role": "user",
+  "created_at": "2026-04-15T16:30:00Z",
+  "updated_at": "2026-04-15T16:30:00Z",
+  "deleted_at": null
+}
+```
+
+**Errors**
+- `401` — missing, invalid, or expired access token
 
 ---
 
@@ -245,36 +265,6 @@ Fetch a single report including its full payload.
 
 ---
 
-#### `PATCH /api/v1/reports/{report_id}`
-
-**Admin only.** Edit a report. A snapshot of the prior state is written to `report_versions`, a new PDF is generated at a new path, and `version` is incremented. The old PDF is never overwritten.
-
-**Request** (all fields optional)
-```json
-{
-  "case_id": "CASE-2026-0001-REV",
-  "payload": { /* full payload — see POST /reports */ }
-}
-```
-
-If `payload` is omitted the existing data is kept. If `case_id` is omitted the existing case_id is kept.
-
-**Response 200** — same shape as `POST /api/v1/reports`, with incremented `version`.
-
-**Errors**
-- `403` — caller is not an admin
-- `404` — report not found
-
----
-
-#### `DELETE /api/v1/reports/{report_id}`
-
-**Admin only.** Soft-deletes the report (`deleted_at` is set). PDF files on disk are **not removed**.
-
-**Response** — 204 No Content.
-
----
-
 #### `GET /api/v1/reports/{report_id}/pdf`
 
 Download the report PDF. Users can download their own; admins can download any.
@@ -300,11 +290,13 @@ Create a new user account.
 {
   "email": "newagent@example.com",
   "password": "at-least-twelve-chars-here",
+  "name": "Alice Investigator",
   "role": "user"
 }
 ```
 
 - `password`: 12–128 characters
+- `name`: 1–100 characters — display name shown in admin listings and `/auth/me`
 - `role`: `"user"` or `"admin"`
 
 **Response 201**
@@ -312,6 +304,7 @@ Create a new user account.
 {
   "id": "uuid",
   "email": "newagent@example.com",
+  "name": "Alice Investigator",
   "role": "user",
   "created_at": "2026-04-15T16:30:00Z",
   "updated_at": "2026-04-15T16:30:00Z",
@@ -349,6 +342,7 @@ Update a user. All fields optional.
 {
   "email": "renamed@example.com",
   "password": "new-password-12-chars",
+  "name": "Alice Investigator",
   "role": "admin"
 }
 ```
@@ -367,6 +361,40 @@ Soft-delete a user. Revokes all their refresh tokens. You cannot delete your own
 
 **Errors**
 - `403` — attempting to delete yourself
+
+---
+
+### Admin — Reports
+
+**All endpoints in this section require the caller to have `role=admin`.** Non-admins hitting these URLs get `401` (not authenticated) or `403` (wrong role); the write surface is not exposed to regular users.
+
+#### `PATCH /api/v1/admin/reports/{report_id}`
+
+Edit a report. A snapshot of the prior state is written to `report_versions`, a new PDF is generated at a new path, and `version` is incremented. The old PDF is never overwritten.
+
+**Request** (all fields optional)
+```json
+{
+  "case_id": "CASE-2026-0001-REV",
+  "payload": { /* full payload — see POST /reports */ }
+}
+```
+
+If `payload` is omitted the existing data is kept. If `case_id` is omitted the existing case_id is kept.
+
+**Response 200** — same shape as `POST /api/v1/reports`, with incremented `version`.
+
+**Errors**
+- `403` — caller is not an admin
+- `404` — report not found
+
+---
+
+#### `DELETE /api/v1/admin/reports/{report_id}`
+
+Soft-deletes the report (`deleted_at` is set). PDF files on disk are **not removed**.
+
+**Response** — 204 No Content.
 
 ---
 
@@ -406,7 +434,7 @@ Soft-delete a user. Revokes all their refresh tokens. You cannot delete your own
 
 ```ts
 // lib/api.ts
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL!; // e.g. http://<vps-ip>:4382
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL!; // e.g. http://41.242.54.70:4382
 
 type Tokens = {
   access_token: string;

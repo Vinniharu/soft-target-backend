@@ -1,8 +1,8 @@
 """Report endpoints.
 
-Users can create reports, view their own, and download PDFs. Admins can
-additionally edit and soft-delete any report. All authorization lives in
-:class:`~app.services.report_service.ReportService`.
+Users can create reports, view their own, and download PDFs. Admin-only
+writes (edit, soft-delete) live under ``/admin/reports``. All
+authorization lives in :class:`~app.services.report_service.ReportService`.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from app.schemas.report import (
     ReportPayload,
     ReportRead,
     ReportSummaryRead,
-    ReportUpdate,
 )
 from app.services.report_service import ReportService
 
@@ -78,28 +77,6 @@ async def get_report(
 ) -> ReportRead:
     report = await service.get_for_user(report_id, actor=current_user)
     return _to_read(report)
-
-
-@router.patch("/{report_id}", response_model=ReportRead)
-async def update_report(
-    report_id: uuid.UUID,
-    payload: ReportUpdate,
-    current_user: CurrentUser,
-    service: Annotated[ReportService, Depends(get_report_service)],
-) -> ReportRead:
-    report = await service.update(
-        report_id=report_id, payload=payload, actor=current_user
-    )
-    return _to_read(report)
-
-
-@router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_report(
-    report_id: uuid.UUID,
-    current_user: CurrentUser,
-    service: Annotated[ReportService, Depends(get_report_service)],
-) -> None:
-    await service.soft_delete(report_id=report_id, actor=current_user)
 
 
 @router.get("/{report_id}/pdf")

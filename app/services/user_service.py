@@ -66,6 +66,7 @@ class UserService:
             access_token=access_token,
             refresh_token=refresh_token,
             expires_in=max(ttl_seconds, 0),
+            role=user.role,
         )
 
     async def refresh(self, *, refresh_token: str) -> TokenPair:
@@ -100,6 +101,7 @@ class UserService:
             user = await self._users.create(
                 email=payload.email,
                 password_hash=hash_password(payload.password),
+                name=payload.name,
                 role=payload.role,
             )
         except ConflictError as exc:
@@ -133,6 +135,8 @@ class UserService:
         if payload.password is not None:
             user.password_hash = hash_password(payload.password)
             await self._refresh_tokens.revoke_all_for_user(user.id)
+        if payload.name is not None:
+            user.name = payload.name
         if payload.role is not None:
             user.role = payload.role
 
@@ -149,6 +153,7 @@ class UserService:
             details={
                 "email_changed": payload.email is not None,
                 "password_changed": payload.password is not None,
+                "name_changed": payload.name is not None,
                 "role_changed": payload.role is not None,
             },
         )
@@ -181,7 +186,7 @@ class UserService:
         return await self._users.list_active(limit=limit, offset=offset)
 
     async def ensure_admin_seed(
-        self, *, email: str, password: str
+        self, *, email: str, password: str, name: str
     ) -> tuple[User, bool]:
         """Idempotently create the first admin. Used by the CLI.
 
@@ -195,6 +200,7 @@ class UserService:
         user = await self._users.create(
             email=email,
             password_hash=hash_password(password),
+            name=name,
             role=UserRole.admin,
         )
         await self._audit.record(

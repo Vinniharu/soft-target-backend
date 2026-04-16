@@ -45,9 +45,6 @@ class Settings(BaseSettings):
     log_level: str = "info"
     enable_docs: bool = False
 
-    login_rate_limit_max_attempts: int = 5
-    login_rate_limit_window_minutes: int = 15
-
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

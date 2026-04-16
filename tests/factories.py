@@ -25,6 +25,7 @@ _counter = itertools.count(1)
 def make_user(
     *,
     email: str | None = None,
+    name: str | None = None,
     role: UserRole = UserRole.user,
     password_hash: str = "$2b$12$fakehashfakehashfakehashfakehashfakehashfakehashfake",
 ) -> User:
@@ -33,6 +34,7 @@ def make_user(
         id=uuid.uuid4(),
         email=email or f"user{n}@example.com",
         password_hash=password_hash,
+        name=name or f"Test User {n}",
         role=role,
     )
     user.created_at = datetime.now(UTC)

@@ -66,14 +66,13 @@ Avoid adding dependencies without explicit justification. Standard library first
 │   │       ├── __init__.py
 │   │       ├── router.py        # APIRouter aggregator
 │   │       └── endpoints/
-│   │           ├── auth.py      # /auth/login, /auth/refresh
-│   │           ├── reports.py   # /reports CRUD (read for users, write for admin)
-│   │           └── admin.py     # /admin/users
+│   │           ├── auth.py      # /auth/login, /auth/refresh, /auth/me
+│   │           ├── reports.py   # user-facing: create + read own + PDF
+│   │           └── admin.py     # admin-only: user CRUD, audit, report edit/delete
 │   ├── core/
 │   │   ├── config.py            # pydantic-settings Settings class
 │   │   ├── security.py          # JWT + bcrypt helpers
-│   │   ├── logging.py           # structlog setup
-│   │   └── rate_limit.py        # login rate limiting
+│   │   └── logging.py           # structlog setup
 │   ├── db/
 │   │   ├── base.py              # DeclarativeBase
 │   │   ├── session.py           # async engine + session factory
@@ -245,8 +244,6 @@ Use `response_model=` on every endpoint that returns data — never let SQLAlche
 - The `get_current_user` dependency parses `Authorization: Bearer <token>` and loads the user. Use it on any endpoint that requires auth.
 - Use `get_current_admin` (or a `RequireRole("admin")` dependency factory) on admin-only routes.
 - **Resource-level checks** (e.g. "is this user the owner of this report?") happen in the **service layer**, never in dependencies or middleware.
-
-The login endpoint is **rate-limited** (5 attempts per 15 minutes per IP). Account lockout is not implemented — rate limit is sufficient for the threat model.
 
 Never put secrets, tokens, or passwords into log lines, exception messages, or response bodies.
 

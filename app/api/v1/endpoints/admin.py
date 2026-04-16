@@ -1,4 +1,5 @@
-"""Admin-only endpoints — user management and audit log access."""
+"""Admin-only endpoints — user management, audit log access, and
+admin-scoped report writes (edit/delete)."""
 
 from __future__ import annotations
 
@@ -10,11 +11,15 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.deps import (
     CurrentAdmin,
     get_audit_repo,
+    get_report_service,
     get_user_service,
 )
+from app.api.v1.endpoints.reports import _to_read as _report_to_read
 from app.repositories.audit_repo import AuditRepository
 from app.schemas.audit import AuditEntryRead, AuditListRead
+from app.schemas.report import ReportRead, ReportUpdate
 from app.schemas.user import UserCreate, UserListRead, UserRead, UserUpdate
+from app.services.report_service import ReportService
 from app.services.user_service import UserService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -84,3 +89,27 @@ async def list_audit(
         items=[AuditEntryRead.model_validate(r) for r in rows],
         total=total,
     )
+
+
+@router.patch("/reports/{report_id}", response_model=ReportRead)
+async def update_report(
+    report_id: uuid.UUID,
+    payload: ReportUpdate,
+    current_admin: CurrentAdmin,
+    service: Annotated[ReportService, Depends(get_report_service)],
+) -> ReportRead:
+    report = await service.update(
+        report_id=report_id, payload=payload, actor=current_admin
+    )
+    return _report_to_read(report)
+
+
+@router.delete(
+    "/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_report(
+    report_id: uuid.UUID,
+    current_admin: CurrentAdmin,
+    service: Annotated[ReportService, Depends(get_report_service)],
+) -> None:
+    await service.soft_delete(report_id=report_id, actor=current_admin)

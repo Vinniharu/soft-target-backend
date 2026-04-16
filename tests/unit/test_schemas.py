@@ -23,7 +23,12 @@ def test_coordinates_rejects_out_of_range() -> None:
 
 def test_user_create_requires_long_password() -> None:
     with pytest.raises(ValidationError):
-        UserCreate(email="a@b.co", password="short")
+        UserCreate(email="a@b.co", password="short", name="Alice")
+
+
+def test_user_create_requires_name() -> None:
+    with pytest.raises(ValidationError):
+        UserCreate(email="a@b.co", password="a-long-enough-password", name="")
 
 
 def test_report_create_rejects_unknown_field() -> None:

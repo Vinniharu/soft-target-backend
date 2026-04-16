@@ -13,7 +13,6 @@ from app.api.middleware import RequestLogMiddleware, SecurityHeadersMiddleware
 from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
-from app.core.rate_limit import SlidingWindowRateLimiter
 from app.db.session import build_engine, build_sessionmaker, dispose_engine
 from app.services.pdf_service import PDFService
 from app.storage.filestore import FileStore
@@ -44,16 +43,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     filestore = FileStore(settings.storage_dir)
     pdf_service = PDFService()
 
-    login_rate_limiter = SlidingWindowRateLimiter(
-        max_attempts=settings.login_rate_limit_max_attempts,
-        window_seconds=settings.login_rate_limit_window_minutes * 60,
-    )
-
     app.state.engine = engine
     app.state.sessionmaker = sessionmaker
     app.state.filestore = filestore
     app.state.pdf_service = pdf_service
-    app.state.login_rate_limiter = login_rate_limiter
 
     try:
         yield
