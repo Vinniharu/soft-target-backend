@@ -72,7 +72,8 @@ Avoid adding dependencies without explicit justification. Standard library first
 │   ├── core/
 │   │   ├── config.py            # pydantic-settings Settings class
 │   │   ├── security.py          # JWT + bcrypt helpers
-│   │   └── logging.py           # structlog setup
+│   │   ├── logging.py           # structlog setup
+│   │   └── rate_limit.py        # login rate limiting
 │   ├── db/
 │   │   ├── base.py              # DeclarativeBase
 │   │   ├── session.py           # async engine + session factory
@@ -244,6 +245,8 @@ Use `response_model=` on every endpoint that returns data — never let SQLAlche
 - The `get_current_user` dependency parses `Authorization: Bearer <token>` and loads the user. Use it on any endpoint that requires auth.
 - Use `get_current_admin` (or a `RequireRole("admin")` dependency factory) on admin-only routes.
 - **Resource-level checks** (e.g. "is this user the owner of this report?") happen in the **service layer**, never in dependencies or middleware.
+
+The login endpoint is **rate-limited** (5 attempts per 15 minutes per IP, configurable). The limiter is in-memory and process-local; if you ever scale to multiple workers, swap for a Redis-backed implementation.
 
 Never put secrets, tokens, or passwords into log lines, exception messages, or response bodies.
 

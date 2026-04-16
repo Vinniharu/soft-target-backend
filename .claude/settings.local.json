@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(python -m compileall -q app/cli.py)",
-      "Bash(python -c \"from app.cli import app as _; print\\('import ok'\\)\")"
+      "Bash(python -c \"from app.cli import app as _; print\\('import ok'\\)\")",
+      "Bash(python -m compileall -q app tests)",
+      "Bash(python -m compileall -q app tests alembic/versions)"
     ]
   }
 }

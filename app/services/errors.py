@@ -25,3 +25,11 @@ class InvalidCredentials(ServiceError):
 
 class Conflict(ServiceError):
     pass
+
+
+class RateLimited(ServiceError):
+    pass
+
+
+class PayloadTooLarge(ServiceError):
+    pass

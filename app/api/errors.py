@@ -16,7 +16,9 @@ from app.services.errors import (
     Conflict,
     InvalidCredentials,
     NotFound,
+    PayloadTooLarge,
     PermissionDenied,
+    RateLimited,
     ServiceError,
 )
 
@@ -43,6 +45,17 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Conflict)
     async def _conflict(_: Request, exc: Conflict) -> JSONResponse:
         return _error(status.HTTP_409_CONFLICT, str(exc) or "conflict")
+
+    @app.exception_handler(RateLimited)
+    async def _rate_limited(_: Request, exc: RateLimited) -> JSONResponse:
+        return _error(status.HTTP_429_TOO_MANY_REQUESTS, "too many requests")
+
+    @app.exception_handler(PayloadTooLarge)
+    async def _too_large(_: Request, exc: PayloadTooLarge) -> JSONResponse:
+        return _error(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            str(exc) or "payload too large",
+        )
 
     @app.exception_handler(ServiceError)
     async def _service_error(_: Request, exc: ServiceError) -> JSONResponse:

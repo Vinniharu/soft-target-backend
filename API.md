@@ -70,7 +70,9 @@ Validation errors (422) include field-level details:
 | 403  | Authenticated but not permitted (e.g. user trying to edit a report) |
 | 404  | Resource doesn't exist or has been soft-deleted |
 | 409  | Conflict (e.g. email already registered) |
+| 413  | Payload too large (e.g. draft body over the per-user cap) |
 | 422  | Pydantic validation failed |
+| 429  | Too many requests (login rate limit) |
 | 500  | Internal error — check server logs |
 
 The backend never returns stack traces or database internals to the client.
@@ -96,7 +98,7 @@ Public. No auth required.
 
 #### `POST /api/v1/auth/login`
 
-Public.
+Public. Rate-limited to **5 attempts per 15 minutes per IP** (configurable).
 
 **Request**
 ```json
@@ -121,6 +123,7 @@ Public.
 
 **Errors**
 - `401` — invalid email or password (same message either way — doesn't leak account existence)
+- `429` — too many login attempts from this IP; wait and retry
 
 ---
 
@@ -262,6 +265,68 @@ Fetch a single report including its full payload.
 **Errors**
 - `404` — report not found or soft-deleted
 - `403` — user trying to read someone else's report
+
+---
+
+#### `GET /api/v1/reports/draft`
+
+Fetch the **current user's** in-progress draft. Each user has at most one draft. Use this for power-outage / browser-crash recovery: the frontend autosaves to this endpoint, then re-loads the draft on app boot.
+
+**Response 200**
+```json
+{
+  "payload": {
+    "case_id": "CASE-2026-0001",
+    "payload": {
+      "primary_target": { "name": "Subject A", "imei_numbers": [] },
+      "soft_targets": [],
+      "summary": null
+    }
+  },
+  "updated_at": "2026-04-17T10:15:32.481Z"
+}
+```
+
+If no draft exists:
+```json
+{ "payload": null, "updated_at": null }
+```
+
+The `payload` shape is **whatever the frontend last PUT** — there is no schema validation on the contents. The recommended convention is to mirror the `POST /reports` request body (`{ case_id, payload }`) so promoting a draft to a real report is a copy-paste, but that's a frontend convention, not a server requirement.
+
+---
+
+#### `PUT /api/v1/reports/draft`
+
+Replace the current user's draft. Idempotent — call as often as you like (debounced autosave is fine). The server stamps `updated_at`.
+
+**Request**
+```json
+{
+  "payload": {
+    "case_id": "CASE-2026-0001",
+    "payload": {
+      "primary_target": { "name": "Subject A" }
+    }
+  }
+}
+```
+
+`payload` may be any JSON object (including `{}`). Cap: **256 KB** of serialized JSON. Bodies over the cap return `413`.
+
+**Response 200** — same shape as `GET /reports/draft`, with the saved payload echoed back and a fresh `updated_at`.
+
+**Errors**
+- `413` — draft body exceeds the size cap
+- `422` — request body is not a valid JSON object under the `payload` key
+
+---
+
+#### `DELETE /api/v1/reports/draft`
+
+Clear the current user's draft. Call this after the frontend successfully `POST`s the draft as a real report.
+
+**Response** — 204 No Content. Idempotent — calling twice is fine.
 
 ---
 

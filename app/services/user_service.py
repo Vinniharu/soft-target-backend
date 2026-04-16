@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from functools import cache
 
 from app.core.config import Settings
 from app.core.security import (
@@ -14,6 +15,15 @@ from app.core.security import (
     verify_password,
     verify_refresh_token,
 )
+
+
+@cache
+def _dummy_password_hash() -> str:
+    """Pre-computed bcrypt hash used to keep the email-miss path on the
+    same latency budget as the email-hit path. The plaintext is unknown
+    to the caller path; this is purely a timing decoy."""
+
+    return hash_password("dummy-password-for-timing-equalization")
 from app.models.user import User, UserRole
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.errors import ConflictError, NotFoundError
@@ -46,6 +56,10 @@ class UserService:
     async def authenticate(self, *, email: str, password: str) -> User:
         user = await self._users.get_by_email(email)
         if user is None or not user.is_active:
+            # Run bcrypt against a dummy hash so the email-miss path
+            # takes the same time as the email-hit path. Without this,
+            # request latency leaks whether an account exists.
+            verify_password(password, _dummy_password_hash())
             raise InvalidCredentials("invalid email or password")
         if not verify_password(password, user.password_hash):
             raise InvalidCredentials("invalid email or password")

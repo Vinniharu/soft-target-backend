@@ -9,6 +9,7 @@ required value is missing or malformed.
 from __future__ import annotations
 
 import base64
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -45,6 +46,11 @@ class Settings(BaseSettings):
     log_level: str = "info"
     enable_docs: bool = False
 
+    login_rate_limit_max_attempts: int = 5
+    login_rate_limit_window_minutes: int = 15
+
+    trusted_proxies: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
@@ -54,6 +60,18 @@ class Settings(BaseSettings):
         if not self.cors_allowed_origins.strip():
             return []
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    @property
+    def trusted_proxy_networks(
+        self,
+    ) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        if not self.trusted_proxies.strip():
+            return []
+        return [
+            ipaddress.ip_network(entry.strip(), strict=False)
+            for entry in self.trusted_proxies.split(",")
+            if entry.strip()
+        ]
 
     @field_validator("jwt_secret")
     @classmethod
@@ -81,6 +99,23 @@ class Settings(BaseSettings):
         # Wildcard rejection happens at app boot in main.py where we know the
         # environment; we keep this field validator permissive to allow tests
         # to construct a Settings without CORS configured.
+        return value
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _trusted_proxies_parseable(cls, value: str) -> str:
+        if not value.strip():
+            return value
+        for entry in value.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError as exc:
+                raise ValueError(
+                    f"TRUSTED_PROXIES entry {entry!r} is not a valid IP or CIDR"
+                ) from exc
         return value
 
 

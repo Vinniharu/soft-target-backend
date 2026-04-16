@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import enum
 import uuid
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import DateTime
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin
-from app.db.types import uuid_pk
+from app.db.types import JSONB, uuid_pk
 
 if TYPE_CHECKING:
     from app.models.audit_log import AuditLog
@@ -35,6 +37,11 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         SAEnum(UserRole, name="user_role", native_enum=False, length=16),
         nullable=False,
         default=UserRole.user,
+    )
+
+    draft: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    draft_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     reports: Mapped[list["Report"]] = relationship(
