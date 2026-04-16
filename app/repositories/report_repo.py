@@ -115,7 +115,12 @@ class ReportRepository:
         )
         count_stmt = select(func.count()).select_from(base.subquery())
         total = (await self._session.execute(count_stmt)).scalar_one()
-        stmt = base.order_by(Report.created_at.desc()).limit(limit).offset(offset)
+        stmt = (
+            base.options(selectinload(Report.creator))
+            .order_by(Report.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all()), int(total)
 
@@ -131,6 +136,11 @@ class ReportRepository:
             base = base.where(Report.deleted_at.is_(None))
         count_stmt = select(func.count()).select_from(base.subquery())
         total = (await self._session.execute(count_stmt)).scalar_one()
-        stmt = base.order_by(Report.created_at.desc()).limit(limit).offset(offset)
+        stmt = (
+            base.options(selectinload(Report.creator))
+            .order_by(Report.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all()), int(total)

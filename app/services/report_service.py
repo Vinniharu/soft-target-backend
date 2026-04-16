@@ -56,6 +56,10 @@ class ReportService:
         )
         await self._filestore.write_bytes(relpath, pdf_bytes)
         report = await self._reports.set_pdf_path(report, relpath)
+        # Pin the creator in-memory so the response shape (which embeds
+        # ReportCreatorRead) doesn't trigger an async lazy-load on the
+        # ORM relationship.
+        report.creator = creator
         await self._audit.record(
             actor_id=creator.id,
             action="report.create",
@@ -69,7 +73,7 @@ class ReportService:
         self, report_id: uuid.UUID, *, actor: User
     ) -> Report:
         try:
-            report = await self._reports.get(report_id)
+            report = await self._reports.get(report_id, with_creator=True)
         except NotFoundError as exc:
             raise NotFound("report not found") from exc
         self._authorize_read(report, actor)

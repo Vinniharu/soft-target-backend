@@ -38,6 +38,7 @@ def _to_read(report: object) -> ReportRead:
             "id": report.id,  # type: ignore[attr-defined]
             "case_id": report.case_id,  # type: ignore[attr-defined]
             "user_id": report.user_id,  # type: ignore[attr-defined]
+            "creator": report.creator,  # type: ignore[attr-defined]
             "version": report.version,  # type: ignore[attr-defined]
             "created_at": report.created_at,  # type: ignore[attr-defined]
             "updated_at": report.updated_at,  # type: ignore[attr-defined]

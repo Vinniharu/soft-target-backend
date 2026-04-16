@@ -218,12 +218,19 @@ Create a new report. Any authenticated user. The server generates the PDF and st
   "id": "0d0f7c8a-1234-5678-90ab-cdef01234567",
   "case_id": "CASE-2026-0001",
   "user_id": "1a2b3c4d-5e6f-7890-abcd-ef0123456789",
+  "creator": {
+    "id": "1a2b3c4d-5e6f-7890-abcd-ef0123456789",
+    "name": "Alice Investigator",
+    "email": "alice@example.com"
+  },
   "version": 1,
   "created_at": "2026-04-15T16:30:00Z",
   "updated_at": "2026-04-15T16:30:00Z",
   "data": { /* full payload echoed back */ }
 }
 ```
+
+`creator` is a small embedded block (id, name, email) so admin views don't have to cross-reference `/admin/users` to know who sent each report. `user_id` is kept alongside it for backwards compatibility — both point at the same user.
 
 ---
 
@@ -243,6 +250,11 @@ List reports. Users see only their own; admins see all.
       "id": "uuid",
       "case_id": "CASE-2026-0001",
       "user_id": "uuid",
+      "creator": {
+        "id": "uuid",
+        "name": "Alice Investigator",
+        "email": "alice@example.com"
+      },
       "version": 1,
       "created_at": "2026-04-15T16:30:00Z",
       "updated_at": "2026-04-15T16:30:00Z"
@@ -252,7 +264,7 @@ List reports. Users see only their own; admins see all.
 }
 ```
 
-List responses **omit** the full `data` payload for efficiency. Use `GET /api/v1/reports/{id}` to load it.
+List responses **omit** the full `data` payload for efficiency. Use `GET /api/v1/reports/{id}` to load it. The `creator` block is included on every item so admin list views can show "report by Alice" without a separate user fetch.
 
 ---
 

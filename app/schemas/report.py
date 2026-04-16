@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class Coordinates(BaseModel):
@@ -71,12 +71,24 @@ class ReportUpdate(BaseModel):
     payload: ReportPayload | None = None
 
 
+class ReportCreatorRead(BaseModel):
+    """Minimal creator block embedded in report responses so admins can
+    tell who sent each report without a separate user lookup."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    email: EmailStr
+
+
 class ReportRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     case_id: str
     user_id: uuid.UUID
+    creator: ReportCreatorRead
     version: int
     created_at: datetime
     updated_at: datetime
@@ -91,6 +103,7 @@ class ReportSummaryRead(BaseModel):
     id: uuid.UUID
     case_id: str
     user_id: uuid.UUID
+    creator: ReportCreatorRead
     version: int
     created_at: datetime
     updated_at: datetime
