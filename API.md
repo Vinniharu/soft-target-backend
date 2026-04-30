@@ -280,6 +280,34 @@ Fetch a single report including its full payload.
 
 ---
 
+#### `PATCH /api/v1/reports/{report_id}`
+
+Edit a report you created. Same write semantics as the admin edit (a snapshot of the prior state is written to `report_versions`, a new PDF is generated at a new path, and `version` is incremented; the old PDF is never overwritten).
+
+Admins can also use this endpoint — it's a strict superset of the owner case. For cross-user edits, admins can use this or `PATCH /api/v1/admin/reports/{report_id}` interchangeably.
+
+**Request** (all fields optional, at least one expected)
+```json
+{
+  "case_id": "CASE-2026-0001-REV",
+  "payload": { /* full payload — see POST /reports */ }
+}
+```
+
+If `payload` is omitted the existing data is kept. If `case_id` is omitted the existing case_id is kept.
+
+**Response 200** — same shape as `POST /api/v1/reports`, with incremented `version`.
+
+**Errors**
+- `400` / `422` — invalid body
+- `401` — missing or expired token
+- `403` — caller is authenticated but is not the report's creator and is not an admin
+- `404` — report not found or soft-deleted
+
+The audit log records `action="report.update"` with `details.via = "owner" | "admin"` so admins can distinguish self-edits from cross-user edits.
+
+---
+
 #### `GET /api/v1/reports/draft`
 
 Fetch the **current user's** in-progress draft. Each user has at most one draft. Use this for power-outage / browser-crash recovery: the frontend autosaves to this endpoint, then re-loads the draft on app boot.
@@ -443,11 +471,13 @@ Soft-delete a user. Revokes all their refresh tokens. You cannot delete your own
 
 ### Admin — Reports
 
-**All endpoints in this section require the caller to have `role=admin`.** Non-admins hitting these URLs get `401` (not authenticated) or `403` (wrong role); the write surface is not exposed to regular users.
+**All endpoints in this section require the caller to have `role=admin`.** Non-admins hitting these URLs get `401` (not authenticated) or `403` (wrong role).
+
+Admins can edit any report via either this section or the user-facing `PATCH /api/v1/reports/{report_id}` (which now accepts owner *or* admin). Soft-delete remains admin-only and lives only here.
 
 #### `PATCH /api/v1/admin/reports/{report_id}`
 
-Edit a report. A snapshot of the prior state is written to `report_versions`, a new PDF is generated at a new path, and `version` is incremented. The old PDF is never overwritten.
+Edit any report (admin cross-user edit). Identical request/response shape and write semantics to `PATCH /api/v1/reports/{report_id}`. A snapshot of the prior state is written to `report_versions`, a new PDF is generated at a new path, and `version` is incremented. The old PDF is never overwritten.
 
 **Request** (all fields optional)
 ```json

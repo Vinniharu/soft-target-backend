@@ -95,12 +95,15 @@ class ReportService:
         payload: ReportUpdate,
         actor: User,
     ) -> Report:
-        if not actor.is_admin:
-            raise PermissionDenied("only admins may edit reports")
+        # Load before authorizing so missing reports return 404 even when
+        # the caller wouldn't have been allowed to edit them anyway.
         try:
             report = await self._reports.get(report_id, with_creator=True)
         except NotFoundError as exc:
             raise NotFound("report not found") from exc
+        is_owner = report.user_id == actor.id
+        if not actor.is_admin and not is_owner:
+            raise PermissionDenied("not allowed to edit this report")
 
         # Snapshot the pre-edit state into report_versions.
         await self._reports.record_version(
@@ -137,7 +140,10 @@ class ReportService:
             action="report.update",
             resource_type="report",
             resource_id=str(report.id),
-            details={"new_version": report.version},
+            details={
+                "new_version": report.version,
+                "via": "admin" if actor.is_admin and not is_owner else "owner",
+            },
         )
         return report
 

@@ -6,7 +6,8 @@
       "Bash(python -m compileall -q app tests)",
       "Bash(python -m compileall -q app tests alembic/versions)",
       "Bash(python -m compileall -q app)",
-      "Bash(ls *)"
+      "Bash(ls *)",
+      "Bash(python *)"
     ]
   }
 }

@@ -1,3 +1,4 @@
+cls
 """FastAPI application factory, lifespan, and wiring."""
 
 from __future__ import annotations

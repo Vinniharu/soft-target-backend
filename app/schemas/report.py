@@ -63,7 +63,10 @@ class ReportCreate(BaseModel):
 
 
 class ReportUpdate(BaseModel):
-    """Admin-only edit. Fields are all optional; missing fields stay as-is."""
+    """Edit body. Fields are all optional; missing fields stay as-is.
+
+    Used by both the owner edit (``PATCH /reports/{id}``) and the admin
+    cross-user edit (``PATCH /admin/reports/{id}``)."""
 
     model_config = ConfigDict(extra="forbid")
 

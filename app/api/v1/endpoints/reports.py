@@ -22,6 +22,7 @@ from app.schemas.report import (
     ReportPayload,
     ReportRead,
     ReportSummaryRead,
+    ReportUpdate,
 )
 from app.services.draft_service import DraftService
 from app.services.report_service import ReportService
@@ -109,6 +110,19 @@ async def get_report(
     service: Annotated[ReportService, Depends(get_report_service)],
 ) -> ReportRead:
     report = await service.get_for_user(report_id, actor=current_user)
+    return _to_read(report)
+
+
+@router.patch("/{report_id}", response_model=ReportRead)
+async def update_report(
+    report_id: uuid.UUID,
+    payload: ReportUpdate,
+    current_user: CurrentUser,
+    service: Annotated[ReportService, Depends(get_report_service)],
+) -> ReportRead:
+    report = await service.update(
+        report_id=report_id, payload=payload, actor=current_user
+    )
     return _to_read(report)
 
 
