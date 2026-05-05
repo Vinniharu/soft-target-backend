@@ -65,7 +65,9 @@ async def list_reports(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> ReportListRead:
-    reports, total = await service.list_for_user(
+    # Server-side scoping: admins see all; org owners see all in their
+    # org; plain users see only their own. See ReportService.list_visible.
+    reports, total = await service.list_visible(
         actor=current_user, limit=limit, offset=offset
     )
     return ReportListRead(
@@ -124,6 +126,18 @@ async def update_report(
         report_id=report_id, payload=payload, actor=current_user
     )
     return _to_read(report)
+
+
+@router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_report(
+    report_id: uuid.UUID,
+    current_user: CurrentUser,
+    service: Annotated[ReportService, Depends(get_report_service)],
+) -> None:
+    # Authorization (admin OR org_owner-of-report's-org) lives in the
+    # service. Plain users get 403 — only their org owner or an admin
+    # may delete a report.
+    await service.soft_delete(report_id=report_id, actor=current_user)
 
 
 @router.get("/{report_id}/pdf")

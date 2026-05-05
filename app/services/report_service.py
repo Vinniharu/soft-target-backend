@@ -2,6 +2,17 @@
 
 The service owns every "can this caller do X to this report?" decision.
 Endpoints never touch repositories directly.
+
+Visibility model (3-tier):
+
+    admin       — sees and acts on every report
+    org_owner   — sees and acts on every report where
+                  ``report.organisation_id == actor.organisation_id``
+    user        — sees and acts on every report where
+                  ``report.user_id == actor.id``
+
+Reports are stamped with the creator's ``organisation_id`` at write
+time and stay attributed to that org for life.
 """
 
 from __future__ import annotations
@@ -42,6 +53,7 @@ class ReportService:
         report = await self._reports.create(
             case_id=payload.case_id,
             user_id=creator.id,
+            organisation_id=creator.organisation_id,
             data=payload.payload.model_dump(mode="json"),
             pdf_path="",
         )
@@ -65,7 +77,14 @@ class ReportService:
             action="report.create",
             resource_type="report",
             resource_id=str(report.id),
-            details={"case_id": report.case_id},
+            details={
+                "case_id": report.case_id,
+                "organisation_id": (
+                    str(creator.organisation_id)
+                    if creator.organisation_id
+                    else None
+                ),
+            },
         )
         return report
 
@@ -79,13 +98,52 @@ class ReportService:
         self._authorize_read(report, actor)
         return report
 
-    async def list_for_user(
+    async def list_visible(
         self, *, actor: User, limit: int, offset: int
     ) -> tuple[list[Report], int]:
+        """Three-way branch:
+        - admin: every report
+        - org_owner: every report in own org
+        - user: own reports only
+        """
+
         if actor.is_admin:
             return await self._reports.list_all(limit=limit, offset=offset)
+        if actor.is_org_owner and actor.organisation_id is not None:
+            return await self._reports.list_for_org(
+                organisation_id=actor.organisation_id,
+                limit=limit,
+                offset=offset,
+            )
         return await self._reports.list_for_user(
             user_id=actor.id, limit=limit, offset=offset
+        )
+
+    async def list_for_org(
+        self,
+        *,
+        organisation_id: uuid.UUID,
+        actor: User,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Report], int]:
+        """Cross-cutting list used by both /admin/organisations/{id}/reports
+        (admin) and /org/reports (org_owner). The service confirms the
+        actor is allowed to see the requested org."""
+
+        if actor.is_admin:
+            return await self._reports.list_for_org(
+                organisation_id=organisation_id, limit=limit, offset=offset
+            )
+        if (
+            actor.is_org_owner
+            and actor.organisation_id == organisation_id
+        ):
+            return await self._reports.list_for_org(
+                organisation_id=organisation_id, limit=limit, offset=offset
+            )
+        raise PermissionDenied(
+            "not allowed to list reports in this organisation"
         )
 
     async def update(
@@ -101,9 +159,7 @@ class ReportService:
             report = await self._reports.get(report_id, with_creator=True)
         except NotFoundError as exc:
             raise NotFound("report not found") from exc
-        is_owner = report.user_id == actor.id
-        if not actor.is_admin and not is_owner:
-            raise PermissionDenied("not allowed to edit this report")
+        via = self._authorize_write(report, actor)
 
         # Snapshot the pre-edit state into report_versions.
         await self._reports.record_version(
@@ -140,29 +196,25 @@ class ReportService:
             action="report.update",
             resource_type="report",
             resource_id=str(report.id),
-            details={
-                "new_version": report.version,
-                "via": "admin" if actor.is_admin and not is_owner else "owner",
-            },
+            details={"new_version": report.version, "via": via},
         )
         return report
 
     async def soft_delete(
         self, *, report_id: uuid.UUID, actor: User
     ) -> None:
-        if not actor.is_admin:
-            raise PermissionDenied("only admins may delete reports")
         try:
             report = await self._reports.get(report_id)
         except NotFoundError as exc:
             raise NotFound("report not found") from exc
+        via = self._authorize_delete(report, actor)
         await self._reports.soft_delete(report)
         await self._audit.record(
             actor_id=actor.id,
             action="report.delete",
             resource_type="report",
             resource_id=str(report.id),
-            details={},
+            details={"via": via},
         )
 
     async def stream_pdf(
@@ -184,8 +236,46 @@ class ReportService:
         )
         return report, self._filestore.stream(report.pdf_path)
 
+    # ------------------------------------------------------------------
+    # Authorization helpers
+    # ------------------------------------------------------------------
+
     def _authorize_read(self, report: Report, actor: User) -> None:
         if actor.is_admin:
             return
-        if report.user_id != actor.id:
-            raise PermissionDenied("not allowed to view this report")
+        if (
+            actor.is_org_owner
+            and actor.organisation_id is not None
+            and report.organisation_id == actor.organisation_id
+        ):
+            return
+        if report.user_id == actor.id:
+            return
+        raise PermissionDenied("not allowed to view this report")
+
+    def _authorize_write(self, report: Report, actor: User) -> str:
+        """Returns the audit ``via`` tag describing how authz was satisfied."""
+
+        if actor.is_admin:
+            return "admin"
+        if (
+            actor.is_org_owner
+            and actor.organisation_id is not None
+            and report.organisation_id == actor.organisation_id
+        ):
+            return "org_owner"
+        if report.user_id == actor.id:
+            return "owner"
+        raise PermissionDenied("not allowed to edit this report")
+
+    def _authorize_delete(self, report: Report, actor: User) -> str:
+        if actor.is_admin:
+            return "admin"
+        if (
+            actor.is_org_owner
+            and actor.organisation_id is not None
+            and report.organisation_id == actor.organisation_id
+        ):
+            return "org_owner"
+        # Plain users cannot delete (per spec).
+        raise PermissionDenied("not allowed to delete this report")

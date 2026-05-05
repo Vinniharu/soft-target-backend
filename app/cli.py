@@ -19,7 +19,9 @@ from app.core.security import hash_password
 from app.db.session import build_engine, build_sessionmaker, dispose_engine
 from app.models.user import UserRole
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.organisation_repo import OrganisationRepository
 from app.repositories.refresh_token_repo import RefreshTokenRepository
+from app.repositories.report_repo import ReportRepository
 from app.repositories.user_repo import UserRepository
 from app.services.user_service import UserService
 
@@ -89,8 +91,124 @@ def create_admin(
         sys.exit(1)
 
 
+# ----------------------------------------------------------------------
+# Convert existing user account into an organisation owner
+# ----------------------------------------------------------------------
+
+
+async def _convert_to_org(email: str, org_name: str) -> dict[str, object]:
+    settings = get_settings()
+    configure_logging(settings.log_level, json_format=False)
+    engine = build_engine(settings)
+    sessionmaker = build_sessionmaker(engine)
+    try:
+        async with sessionmaker() as session:
+            users = UserRepository(session)
+            organisations = OrganisationRepository(session)
+            reports = ReportRepository(session)
+            audit = AuditRepository(session)
+
+            user = await users.get_by_email(email)
+            if user is None:
+                raise RuntimeError(f"no active user with email {email!r}")
+
+            if user.role == UserRole.org_owner and user.organisation_id is not None:
+                # Idempotent no-op.
+                return {
+                    "status": "already_converted",
+                    "user_id": str(user.id),
+                    "organisation_id": str(user.organisation_id),
+                }
+            if user.role != UserRole.user:
+                raise RuntimeError(
+                    f"user {email!r} has role {user.role.value!r}; "
+                    "only role=user accounts may be converted"
+                )
+            if user.organisation_id is not None:
+                raise RuntimeError(
+                    f"user {email!r} already belongs to organisation "
+                    f"{user.organisation_id}; cannot convert"
+                )
+
+            prior_role = user.role.value
+            org = await organisations.create(
+                name=org_name, owner_user_id=user.id
+            )
+            user.role = UserRole.org_owner
+            user.organisation_id = org.id
+            await users.update(user)
+
+            stamped = await reports.stamp_org_for_user(
+                user_id=user.id, organisation_id=org.id
+            )
+            await audit.record(
+                actor_id=None,
+                action="org.convert",
+                resource_type="organisation",
+                resource_id=str(org.id),
+                details={
+                    "user_id": str(user.id),
+                    "user_email": user.email,
+                    "prior_role": prior_role,
+                    "reports_stamped": stamped,
+                },
+            )
+            await session.commit()
+            return {
+                "status": "converted",
+                "user_id": str(user.id),
+                "organisation_id": str(org.id),
+                "reports_stamped": stamped,
+            }
+    finally:
+        await dispose_engine(engine)
+
+
+@app.command("convert-to-org")
+def convert_to_org(
+    email: str = typer.Argument(..., help="Email of the user to promote"),
+    name: str = typer.Option(
+        ...,
+        "--name",
+        help="Name of the new organisation",
+    ),
+) -> None:
+    """Promote an existing user account into an organisation owner.
+
+    Creates an organisation with the given name, sets the user's role
+    to ``org_owner``, links them to the new org, and stamps every
+    existing report owned by that user with the org id. Idempotent: a
+    second run for the same email is a no-op.
+    """
+
+    if not name.strip() or len(name) > 120:
+        typer.echo("name must be 1-120 characters", err=True)
+        raise typer.Exit(code=2)
+    try:
+        result = asyncio.run(_convert_to_org(email, name.strip()))
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+    if result["status"] == "already_converted":
+        typer.echo(
+            f"already converted: {email} owns organisation "
+            f"{result['organisation_id']}"
+        )
+        return
+    typer.echo(
+        f"converted {email}: organisation_id={result['organisation_id']}, "
+        f"reports_stamped={result['reports_stamped']}"
+    )
+
+
+# ----------------------------------------------------------------------
+# Dev seed
+# ----------------------------------------------------------------------
+
+
 async def _seed_dev(
-    admin_email: str, investigators: int, domain: str
+    admin_email: str, domain: str
 ) -> list[tuple[str, str, str]]:
     settings = get_settings()
     if settings.app_env != "development":
@@ -103,39 +221,80 @@ async def _seed_dev(
     sessionmaker = build_sessionmaker(engine)
     seeded: list[tuple[str, str, str]] = []
 
-    async def upsert(
-        email: str, name: str, role: UserRole, users: UserRepository
-    ) -> str:
+    async def upsert_user(
+        email: str,
+        name: str,
+        role: UserRole,
+        organisation_id: object,
+        users: UserRepository,
+    ) -> tuple[object, str]:
         password = secrets.token_urlsafe(16)
         existing = await users.get_by_email(email, include_deleted=True)
         if existing is None:
-            await users.create(
+            user = await users.create(
                 email=email,
                 password_hash=hash_password(password),
                 name=name,
                 role=role,
+                organisation_id=organisation_id,  # type: ignore[arg-type]
             )
         else:
             existing.password_hash = hash_password(password)
             existing.name = name
             existing.role = role
+            existing.organisation_id = organisation_id  # type: ignore[assignment]
             existing.deleted_at = None
-            await users.update(existing)
-        return password
+            user = await users.update(existing)
+        return user.id, password
+
+    async def upsert_org(
+        name: str, owner_id: object, organisations: OrganisationRepository
+    ) -> object:
+        # No idempotent get-by-name; re-running seed-dev assumes a clean
+        # DB. If the org already exists by partial-unique-name, the
+        # IntegrityError is bubbled up via ConflictError.
+        org = await organisations.create(
+            name=name, owner_user_id=owner_id  # type: ignore[arg-type]
+        )
+        return org.id
 
     try:
         async with sessionmaker() as session:
             users = UserRepository(session)
-            admin_pw = await upsert(
-                admin_email, "Admin", UserRole.admin, users
+            organisations = OrganisationRepository(session)
+
+            admin_id, admin_pw = await upsert_user(
+                admin_email, "Admin", UserRole.admin, None, users
             )
             seeded.append(("admin", admin_email, admin_pw))
-            for i in range(1, investigators + 1):
-                email = f"investigator{i}@{domain}"
-                pw = await upsert(
-                    email, f"Investigator {i}", UserRole.user, users
+
+            for letter in ("a", "b"):
+                owner_email = f"owner-{letter}@{domain}"
+                owner_id, owner_pw = await upsert_user(
+                    owner_email,
+                    f"Org {letter.upper()} Owner",
+                    UserRole.org_owner,
+                    None,
+                    users,
                 )
-                seeded.append(("investigator", email, pw))
+                org_id = await upsert_org(
+                    f"Org {letter.upper()}", owner_id, organisations
+                )
+                # Re-fetch and link the owner to the org.
+                owner = await users.get(owner_id)  # type: ignore[arg-type]
+                owner.organisation_id = org_id  # type: ignore[assignment]
+                await users.update(owner)
+                seeded.append((f"org_owner ({letter.upper()})", owner_email, owner_pw))
+
+                member_email = f"member-{letter}@{domain}"
+                _, member_pw = await upsert_user(
+                    member_email,
+                    f"Org {letter.upper()} Member",
+                    UserRole.user,
+                    org_id,
+                    users,
+                )
+                seeded.append((f"user ({letter.upper()})", member_email, member_pw))
             await session.commit()
     finally:
         await dispose_engine(engine)
@@ -148,22 +307,20 @@ def seed_dev(
     admin_email: str = typer.Option(
         "admin@example.dev", "--admin-email", help="Email for the seeded admin"
     ),
-    investigators: int = typer.Option(
-        3, "--investigators", min=0, max=50, help="Number of investigator accounts"
-    ),
     domain: str = typer.Option(
-        "example.dev", "--domain", help="Email domain for investigator accounts"
+        "example.dev", "--domain", help="Email domain for seeded accounts"
     ),
 ) -> None:
-    """Dev-only: create an admin + N investigators with generated passwords.
+    """Dev-only: create an admin + two organisations (each with an owner +
+    one member) with generated passwords.
 
-    Refuses to run unless APP_ENV=development. If an account already
-    exists it is reset with a new password, reactivated, and assigned
-    the target role. Credentials are printed once to stdout.
+    Refuses to run unless APP_ENV=development. Assumes a fresh DB —
+    re-running against an existing seed will fail on the unique org
+    name.
     """
 
     try:
-        seeded = asyncio.run(_seed_dev(admin_email, investigators, domain))
+        seeded = asyncio.run(_seed_dev(admin_email, domain))
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"error: {exc}", err=True)
         sys.exit(1)
@@ -171,9 +328,9 @@ def seed_dev(
     typer.echo("")
     typer.echo("Save these now — passwords are not recoverable:")
     typer.echo("")
-    typer.echo(f"{'ROLE':<14}{'EMAIL':<40}PASSWORD")
+    typer.echo(f"{'ROLE':<22}{'EMAIL':<40}PASSWORD")
     for role, email, password in seeded:
-        typer.echo(f"{role:<14}{email:<40}{password}")
+        typer.echo(f"{role:<22}{email:<40}{password}")
 
 
 @app.command("version")

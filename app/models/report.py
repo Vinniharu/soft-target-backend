@@ -12,6 +12,7 @@ from app.db.base import Base, SoftDeleteMixin, TimestampMixin
 from app.db.types import JSONB, UUID, uuid_pk
 
 if TYPE_CHECKING:
+    from app.models.organisation import Organisation
     from app.models.report_version import ReportVersion
     from app.models.user import User
 
@@ -21,6 +22,12 @@ class Report(Base, TimestampMixin, SoftDeleteMixin):
     __table_args__ = (
         Index("ix_reports_user_id_created_at", "user_id", "created_at"),
         Index("ix_reports_case_id", "case_id"),
+        Index(
+            "ix_reports_organisation_id_created_at",
+            "organisation_id",
+            "created_at",
+            postgresql_where="deleted_at IS NULL",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -31,11 +38,19 @@ class Report(Base, TimestampMixin, SoftDeleteMixin):
         nullable=False,
         index=True,
     )
+    organisation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     pdf_path: Mapped[str] = mapped_column(String(512), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     creator: Mapped["User"] = relationship(back_populates="reports")
+    organisation: Mapped["Organisation | None"] = relationship(
+        back_populates="reports"
+    )
     versions: Mapped[list["ReportVersion"]] = relationship(
         back_populates="report",
         cascade="all, delete-orphan",

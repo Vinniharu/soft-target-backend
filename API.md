@@ -31,12 +31,13 @@ JWT bearer tokens. No public signup — all accounts are created by an admin.
 
 ### Roles
 
-| Role  | Can do |
-|-------|--------|
-| `user`  | Create reports, view/download their own reports |
-| `admin` | Everything a user can do, plus: edit/delete any report, create/edit/delete users, view audit logs |
+| Role | Can do |
+|---|---|
+| `user` | Create reports; view, edit, and download their own reports. Cannot delete. |
+| `org_owner` | Everything a `user` can do, plus: see, edit, and delete every report in their organisation; create / edit / soft-delete members of their own organisation. |
+| `admin` | Everything an `org_owner` can do, plus: create / edit / soft-delete organisations; create / edit / delete users in any organisation; edit / delete any report; view audit logs. |
 
-Users cannot edit or delete reports — that's admin-only by design.
+Tenant model: every non-admin user belongs to exactly one organisation. Each organisation has exactly one `org_owner`. Reports are stamped with the creator's organisation at write time and stay attributed to that organisation for life. See **UPDATE.md** for the full migration explanation and the visibility matrix.
 
 ---
 
@@ -119,7 +120,7 @@ Public. Rate-limited to **5 attempts per 15 minutes per IP** (configurable).
 }
 ```
 
-`expires_in` is seconds until the access token expires (900 = 15 min). `role` is `"user"` or `"admin"` and lets the frontend pick the right post-login landing page without a follow-up call.
+`expires_in` is seconds until the access token expires (900 = 15 min). `role` is `"user"`, `"org_owner"`, or `"admin"` and lets the frontend pick the right post-login landing page without a follow-up call. To learn the caller's tenant (organisation), call `GET /api/v1/auth/me` once after login.
 
 **Errors**
 - `401` — invalid email or password (same message either way — doesn't leak account existence)
@@ -154,14 +155,20 @@ Returns the currently-authenticated user. Requires `Authorization: Bearer <acces
   "email": "investigator@example.com",
   "name": "Alice Investigator",
   "role": "user",
+  "organisation": {
+    "id": "11111111-2222-3333-4444-555555555555",
+    "name": "Acme Investigations Ltd."
+  },
   "created_at": "2026-04-15T16:30:00Z",
   "updated_at": "2026-04-15T16:30:00Z",
   "deleted_at": null
 }
 ```
 
+`organisation` is `null` for admin accounts (admins do not belong to any organisation). For `org_owner` and `user` roles it is always populated.
+
 **Errors**
-- `401` — missing, invalid, or expired access token
+- `401` — missing, invalid, or expired access token; also `401 organisation deactivated` if the caller's organisation has been soft-deleted
 
 ---
 
@@ -218,10 +225,15 @@ Create a new report. Any authenticated user. The server generates the PDF and st
   "id": "0d0f7c8a-1234-5678-90ab-cdef01234567",
   "case_id": "CASE-2026-0001",
   "user_id": "1a2b3c4d-5e6f-7890-abcd-ef0123456789",
+  "organisation_id": "11111111-2222-3333-4444-555555555555",
   "creator": {
     "id": "1a2b3c4d-5e6f-7890-abcd-ef0123456789",
     "name": "Alice Investigator",
-    "email": "alice@example.com"
+    "email": "alice@example.com",
+    "organisation": {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "name": "Acme Investigations Ltd."
+    }
   },
   "version": 1,
   "created_at": "2026-04-15T16:30:00Z",
@@ -230,13 +242,13 @@ Create a new report. Any authenticated user. The server generates the PDF and st
 }
 ```
 
-`creator` is a small embedded block (id, name, email) so admin views don't have to cross-reference `/admin/users` to know who sent each report. `user_id` is kept alongside it for backwards compatibility — both point at the same user.
+`creator` is a small embedded block (id, name, email, organisation) so admin and org-owner views don't have to cross-reference users to know who sent each report. `user_id` is kept alongside it for backwards compatibility — both point at the same user. `organisation_id` is the report's tenant; it equals `creator.organisation.id` for org-scoped reports and is `null` for admin-created reports.
 
 ---
 
 #### `GET /api/v1/reports`
 
-List reports. Users see only their own; admins see all.
+List reports. Server-scoped: `user` sees only their own; `org_owner` sees every report in their organisation; `admin` sees every report.
 
 **Query params**
 - `limit` (1–200, default 50)
@@ -276,15 +288,15 @@ Fetch a single report including its full payload.
 
 **Errors**
 - `404` — report not found or soft-deleted
-- `403` — user trying to read someone else's report
+- `403` — caller cannot view this report (not the creator, not in the same organisation, and not an admin)
 
 ---
 
 #### `PATCH /api/v1/reports/{report_id}`
 
-Edit a report you created. Same write semantics as the admin edit (a snapshot of the prior state is written to `report_versions`, a new PDF is generated at a new path, and `version` is incremented; the old PDF is never overwritten).
+Edit a report. Allowed for the report's creator, any `org_owner` in the report's organisation, and any admin. Same write semantics: a snapshot of the prior state is written to `report_versions`, a new PDF is generated at a new path, and `version` is incremented; the old PDF is never overwritten.
 
-Admins can also use this endpoint — it's a strict superset of the owner case. For cross-user edits, admins can use this or `PATCH /api/v1/admin/reports/{report_id}` interchangeably.
+`PATCH /api/v1/admin/reports/{report_id}` is kept as an admin-only alias for cross-organisation edits — same shape, same behaviour.
 
 **Request** (all fields optional, at least one expected)
 ```json
@@ -301,10 +313,24 @@ If `payload` is omitted the existing data is kept. If `case_id` is omitted the e
 **Errors**
 - `400` / `422` — invalid body
 - `401` — missing or expired token
-- `403` — caller is authenticated but is not the report's creator and is not an admin
+- `403` — caller cannot edit this report (not the creator, not the report's `org_owner`, and not an admin)
 - `404` — report not found or soft-deleted
 
-The audit log records `action="report.update"` with `details.via = "owner" | "admin"` so admins can distinguish self-edits from cross-user edits.
+The audit log records `action="report.update"` with `details.via = "owner" | "org_owner" | "admin"` so admins can distinguish self-edits, org-scoped edits, and cross-org admin edits.
+
+---
+
+#### `DELETE /api/v1/reports/{report_id}`
+
+Soft-delete a report. Allowed for the `org_owner` of the report's organisation and for admins. Plain users (`role=user`) get `403` — they cannot delete reports they created. The PDF on disk is **not** removed.
+
+**Response** — `204 No Content`. Idempotent — calling twice on a row that no longer exists returns `404`.
+
+**Errors**
+- `403` — caller is `role=user`, or `role=org_owner` from a different organisation
+- `404` — report not found or already deleted
+
+`DELETE /api/v1/admin/reports/{report_id}` is kept as an admin-only alias.
 
 ---
 
@@ -469,11 +495,232 @@ Soft-delete a user. Revokes all their refresh tokens. You cannot delete your own
 
 ---
 
+### Admin — Organisations
+
+**All endpoints in this section require the caller to have `role=admin`.** Non-admins get `401`/`403`. See **UPDATE.md** for the design rationale and the full visibility matrix.
+
+#### `POST /api/v1/admin/organisations`
+
+Create an organisation **and** its owner account in a single transaction. There is no two-step path — every organisation always has exactly one owner.
+
+**Request**
+```json
+{
+  "name": "Acme Investigations Ltd.",
+  "owner": {
+    "email": "owner@acme.example",
+    "password": "an-actual-strong-password",
+    "name": "Alice Owner"
+  }
+}
+```
+
+**Validation**
+- `name`: 1–120 chars, unique among non-deleted organisations
+- `owner.email`: must not already be registered
+- `owner.password`: 12–128 chars
+- `owner.name`: 1–100 chars
+
+**Response 201**
+```json
+{
+  "id": "11111111-2222-3333-4444-555555555555",
+  "name": "Acme Investigations Ltd.",
+  "owner_user_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "created_at": "2026-05-05T12:00:00Z",
+  "updated_at": "2026-05-05T12:00:00Z",
+  "deleted_at": null
+}
+```
+
+The owner can log in immediately at `POST /api/v1/auth/login` with the credentials supplied; their `role` will be `org_owner` and `/auth/me` will return the new organisation.
+
+**Errors**
+- `409` — organisation name already in use, or owner email already registered
+
+---
+
+#### `GET /api/v1/admin/organisations`
+
+List organisations.
+
+**Query params** — `limit` (1–200, default 50), `offset` (≥ 0), `include_deleted` (default `false`).
+
+**Response 200**
+```json
+{
+  "items": [ { /* OrganisationRead */ } ],
+  "total": 7
+}
+```
+
+---
+
+#### `GET /api/v1/admin/organisations/{org_id}`
+
+Fetch one organisation.
+
+**Errors**
+- `404` — not found or soft-deleted (use `?include_deleted=true` on the list endpoint to find soft-deleted orgs)
+
+---
+
+#### `PATCH /api/v1/admin/organisations/{org_id}`
+
+Rename an organisation.
+
+**Request**
+```json
+{ "name": "Acme (renamed)" }
+```
+
+**Errors**
+- `409` — new name conflicts with another active organisation
+- `404` — not found
+
+---
+
+#### `DELETE /api/v1/admin/organisations/{org_id}`
+
+Soft-delete an organisation. The row is marked `deleted_at`; nothing is actually removed.
+
+Side effects:
+- All refresh tokens for users in that organisation are revoked.
+- The next request from any member's existing access token returns `401 organisation deactivated` (the deps layer checks this on every request).
+
+**Response** — `204 No Content`.
+
+---
+
+#### `POST /api/v1/admin/organisations/{org_id}/users`
+
+Admin-side user creation in any organisation. The `organisation_id` from the path always wins over the body.
+
+**Request** — same shape as `POST /api/v1/admin/users` (the body's `organisation_id` is overwritten by the path):
+```json
+{
+  "email": "newuser@acme.example",
+  "password": "strong-password",
+  "name": "New User",
+  "role": "user"
+}
+```
+
+`role` may be `user` or `org_owner`. Setting `org_owner` here makes the user an owner-eligible member of the org but does **not** automatically replace the existing owner — only one owner per org is allowed and the partial unique index will reject a second one. Reserve `org_owner` here for the rare case of resurrecting a soft-deleted previous owner.
+
+**Response 201** — `UserRead`.
+
+---
+
+#### `GET /api/v1/admin/organisations/{org_id}/users`
+
+List users in any organisation. Same shape as `GET /api/v1/admin/users` filtered by `organisation_id`.
+
+---
+
+#### `GET /api/v1/admin/organisations/{org_id}/reports`
+
+List reports in any organisation. Same shape as `GET /api/v1/reports`.
+
+---
+
+### Org owner — Self-service
+
+These routes are scoped implicitly to the caller's own organisation. The path never carries an org id; the server reads the organisation from the caller's identity. Required role: `org_owner` (admins are also accepted but should normally use the `/admin/organisations/...` paths instead).
+
+#### `GET /api/v1/org/me`
+
+Return the caller's organisation. Mirrors the admin `GET /api/v1/admin/organisations/{id}` for the caller's own tenant.
+
+**Response 200** — `OrganisationRead` (see admin section).
+
+**Errors**
+- `404` — caller has no organisation (e.g. an admin without a tenant called this route by mistake)
+
+---
+
+#### `POST /api/v1/org/users`
+
+Create a member in the caller's own organisation. The role is forced to `user` and the organisation is forced to the caller's — the body has neither field.
+
+**Request**
+```json
+{
+  "email": "alice@acme.example",
+  "password": "strong-password",
+  "name": "Alice"
+}
+```
+
+**Response 201** — `UserRead`. The `role` is always `user`.
+
+**Errors**
+- `403` — caller is not an `org_owner`
+- `409` — email already registered
+
+---
+
+#### `GET /api/v1/org/users`
+
+List members of the caller's own organisation.
+
+**Query params** — `limit`, `offset`.
+
+**Response 200** — `UserListRead` (see Admin — Users).
+
+---
+
+#### `GET /api/v1/org/users/{user_id}`
+
+Fetch one member. Caller must be in the same organisation, or fetching themselves.
+
+**Errors**
+- `403` — user is not in the caller's organisation
+- `404` — user not found
+
+---
+
+#### `PATCH /api/v1/org/users/{user_id}`
+
+Edit a member of the caller's own organisation (or self). Cannot change role or organisation — both fields are absent from the request body.
+
+**Request** (all optional, at least one)
+```json
+{
+  "email": "alice2@acme.example",
+  "password": "new-strong-password",
+  "name": "Alice (Married name)"
+}
+```
+
+**Response 200** — `UserRead`.
+
+**Errors**
+- `403` — user is not in the caller's organisation
+- `409` — email collision
+
+---
+
+#### `DELETE /api/v1/org/users/{user_id}`
+
+Soft-delete a member of the caller's own organisation. The owner cannot be deleted via this path — admin must soft-delete the entire organisation first.
+
+**Errors**
+- `403` — user is not in the caller's organisation, or user is the organisation owner, or attempting self-delete
+
+---
+
+#### `GET /api/v1/org/reports`
+
+List **every** report in the caller's organisation, regardless of which member created it. Mirrors `GET /api/v1/admin/organisations/{id}/reports` for the caller's own org.
+
+**Query params** — `limit`, `offset`. **Response 200** — `ReportListRead`.
+
+---
+
 ### Admin — Reports
 
-**All endpoints in this section require the caller to have `role=admin`.** Non-admins hitting these URLs get `401` (not authenticated) or `403` (wrong role).
-
-Admins can edit any report via either this section or the user-facing `PATCH /api/v1/reports/{report_id}` (which now accepts owner *or* admin). Soft-delete remains admin-only and lives only here.
+**All endpoints in this section require the caller to have `role=admin`.** Non-admins get `401`/`403`. These routes are kept as cross-organisation aliases — the equivalent action on a single report is also reachable via the user-facing `PATCH/DELETE /api/v1/reports/{id}`.
 
 #### `PATCH /api/v1/admin/reports/{report_id}`
 

@@ -22,10 +22,12 @@ from app.core.security import TokenError, decode_access_token
 from app.models.user import User, UserRole
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.errors import NotFoundError
+from app.repositories.organisation_repo import OrganisationRepository
 from app.repositories.refresh_token_repo import RefreshTokenRepository
 from app.repositories.report_repo import ReportRepository
 from app.repositories.user_repo import UserRepository
 from app.services.draft_service import DraftService
+from app.services.organisation_service import OrganisationService
 from app.services.pdf_service import PDFService
 from app.services.report_service import ReportService
 from app.services.user_service import UserService
@@ -88,6 +90,10 @@ def get_refresh_token_repo(session: SessionDep) -> RefreshTokenRepository:
     return RefreshTokenRepository(session)
 
 
+def get_organisation_repo(session: SessionDep) -> OrganisationRepository:
+    return OrganisationRepository(session)
+
+
 def get_user_service(
     settings: SettingsDep,
     users: Annotated[UserRepository, Depends(get_user_repo)],
@@ -122,6 +128,16 @@ def get_draft_service(
     return DraftService(users=users)
 
 
+def get_organisation_service(
+    organisations: Annotated[OrganisationRepository, Depends(get_organisation_repo)],
+    users: Annotated[UserRepository, Depends(get_user_repo)],
+    audit: Annotated[AuditRepository, Depends(get_audit_repo)],
+) -> OrganisationService:
+    return OrganisationService(
+        organisations=organisations, users=users, audit=audit
+    )
+
+
 async def get_current_user(
     settings: SettingsDep,
     users: Annotated[UserRepository, Depends(get_user_repo)],
@@ -151,7 +167,10 @@ async def get_current_user(
         ) from exc
 
     try:
-        user = await users.get(user_id)
+        # Eager-load the organisation so /auth/me and other response
+        # shapes that embed an organisation summary don't trigger an
+        # async lazy-load on the ORM relationship.
+        user = await users.get(user_id, with_organisation=True)
     except NotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -162,6 +181,14 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="user is deactivated",
+        )
+    if (
+        user.organisation is not None
+        and user.organisation.deleted_at is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="organisation deactivated",
         )
     return user
 
@@ -184,6 +211,21 @@ class RequireRole:
 
 require_admin = RequireRole(UserRole.admin)
 CurrentAdmin = Annotated[User, Depends(require_admin)]
+
+
+async def require_org_admin(user: CurrentUser) -> User:
+    """Admin or organisation owner. Endpoints scoped to a single
+    organisation use this dep; the service does the same-org check."""
+
+    if user.is_admin or user.is_org_owner:
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="organisation owner or admin role required",
+    )
+
+
+CurrentOrgAdmin = Annotated[User, Depends(require_org_admin)]
 
 
 def client_ip(request: Request) -> str:

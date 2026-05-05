@@ -17,6 +17,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.organisation import OrganisationSummary
+
 
 class Coordinates(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -75,14 +77,16 @@ class ReportUpdate(BaseModel):
 
 
 class ReportCreatorRead(BaseModel):
-    """Minimal creator block embedded in report responses so admins can
-    tell who sent each report without a separate user lookup."""
+    """Minimal creator block embedded in report responses so admins and
+    org owners can tell who sent each report without a separate user
+    lookup. ``organisation`` is null for admin-created reports."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     name: str
     email: EmailStr
+    organisation: OrganisationSummary | None = None
 
 
 class ReportRead(BaseModel):
@@ -91,6 +95,7 @@ class ReportRead(BaseModel):
     id: uuid.UUID
     case_id: str
     user_id: uuid.UUID
+    organisation_id: uuid.UUID | None = None
     creator: ReportCreatorRead
     version: int
     created_at: datetime
@@ -106,6 +111,7 @@ class ReportSummaryRead(BaseModel):
     id: uuid.UUID
     case_id: str
     user_id: uuid.UUID
+    organisation_id: uuid.UUID | None = None
     creator: ReportCreatorRead
     version: int
     created_at: datetime
