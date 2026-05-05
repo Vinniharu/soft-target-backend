@@ -13,10 +13,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import CurrentUser, get_draft_service, get_report_service
+from app.api.deps import CurrentUser, get_report_service
 from app.schemas.report import (
-    DraftRead,
-    DraftWrite,
     ReportCreate,
     ReportListRead,
     ReportPayload,
@@ -24,7 +22,6 @@ from app.schemas.report import (
     ReportSummaryRead,
     ReportUpdate,
 )
-from app.services.draft_service import DraftService
 from app.services.report_service import ReportService
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -74,35 +71,6 @@ async def list_reports(
         items=[ReportSummaryRead.model_validate(r) for r in reports],
         total=total,
     )
-
-
-@router.get("/draft", response_model=DraftRead)
-async def get_draft(
-    current_user: CurrentUser,
-    service: Annotated[DraftService, Depends(get_draft_service)],
-) -> DraftRead:
-    payload, updated_at = await service.get(actor=current_user)
-    return DraftRead(payload=payload, updated_at=updated_at)
-
-
-@router.put("/draft", response_model=DraftRead)
-async def put_draft(
-    payload: DraftWrite,
-    current_user: CurrentUser,
-    service: Annotated[DraftService, Depends(get_draft_service)],
-) -> DraftRead:
-    saved, updated_at = await service.set(
-        actor=current_user, payload=payload.payload
-    )
-    return DraftRead(payload=saved, updated_at=updated_at)
-
-
-@router.delete("/draft", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_draft(
-    current_user: CurrentUser,
-    service: Annotated[DraftService, Depends(get_draft_service)],
-) -> None:
-    await service.clear(actor=current_user)
 
 
 @router.get("/{report_id}", response_model=ReportRead)

@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin
-from app.db.types import JSONB, UUID, uuid_pk
+from app.db.types import UUID, uuid_pk
 
 if TYPE_CHECKING:
     from app.models.audit_log import AuditLog
+    from app.models.draft import Draft
     from app.models.organisation import Organisation
     from app.models.refresh_token import RefreshToken
     from app.models.report import Report
@@ -47,11 +46,6 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         index=True,
     )
 
-    draft: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    draft_updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
     organisation: Mapped["Organisation | None"] = relationship(
         back_populates="members",
         foreign_keys=[organisation_id],
@@ -64,6 +58,11 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     reports: Mapped[list["Report"]] = relationship(
         back_populates="creator",
         cascade="save-update, merge",
+        passive_deletes=True,
+    )
+    drafts: Mapped[list["Draft"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(

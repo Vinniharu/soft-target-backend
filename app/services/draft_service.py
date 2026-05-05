@@ -1,52 +1,153 @@
-"""Per-user report draft persistence.
+"""Per-user draft persistence (multi-draft).
 
-A draft is a single free-form JSON blob attached to the user row. It
-survives browser refreshes and machine restarts so an investigator can
-resume in-progress work after a power outage. There is at most one
-draft per user; promoting it to a real report and clearing it are
-client-driven (call POST /reports then DELETE /reports/draft).
+Each draft is its own row owned by a single user. The frontend can keep
+several drafts in flight at once and switch between them. Promotion to
+a real report stays client-driven: read draft → ``POST /reports`` →
+``DELETE /reports/drafts/{id}``.
+
+Caps:
+- 10 drafts per user (creating an 11th raises ``Conflict``).
+- 256 KB serialized JSON per draft (raises ``PayloadTooLarge``).
+
+Cross-user isolation: every read/write is scoped to ``actor.id``. A
+caller asking for someone else's draft id gets ``NotFound`` (we use
+``404`` rather than ``403`` so we don't confirm a draft id exists).
 """
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
-from typing import Any
+import uuid
 
+from app.models.draft import Draft
 from app.models.user import User
-from app.repositories.user_repo import UserRepository
-from app.services.errors import PayloadTooLarge
+from app.repositories.draft_repo import DraftRepository
+from app.repositories.errors import NotFoundError
+from app.schemas.draft import DraftCreate, DraftUpdate
+from app.services.errors import Conflict, NotFound, PayloadTooLarge
 
 DEFAULT_MAX_BYTES = 256 * 1024
+DEFAULT_MAX_PER_USER = 10
 
 
 class DraftService:
     def __init__(
-        self, *, users: UserRepository, max_bytes: int = DEFAULT_MAX_BYTES
+        self,
+        *,
+        drafts: DraftRepository,
+        max_bytes: int = DEFAULT_MAX_BYTES,
+        max_per_user: int = DEFAULT_MAX_PER_USER,
     ) -> None:
-        self._users = users
+        self._drafts = drafts
         self._max_bytes = max_bytes
+        self._max_per_user = max_per_user
 
-    async def get(
-        self, *, actor: User
-    ) -> tuple[dict[str, Any] | None, datetime | None]:
-        return actor.draft, actor.draft_updated_at
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
 
-    async def set(
-        self, *, actor: User, payload: dict[str, Any]
-    ) -> tuple[dict[str, Any], datetime]:
+    async def list(
+        self, *, actor: User, limit: int = 50, offset: int = 0
+    ) -> tuple[list[Draft], int]:
+        return await self._drafts.list_for_user(
+            user_id=actor.id, limit=limit, offset=offset
+        )
+
+    async def get(self, *, draft_id: uuid.UUID, actor: User) -> Draft:
+        try:
+            draft = await self._drafts.get(draft_id)
+        except NotFoundError as exc:
+            raise NotFound("draft not found") from exc
+        if draft.user_id != actor.id:
+            # Treat cross-user access exactly like missing — do not leak
+            # the existence of another user's draft id.
+            raise NotFound("draft not found")
+        return draft
+
+    # ------------------------------------------------------------------
+    # Write
+    # ------------------------------------------------------------------
+
+    async def create(
+        self, *, actor: User, payload: DraftCreate
+    ) -> Draft:
+        self._enforce_payload_size(payload.payload)
+        existing = await self._drafts.count_for_user(user_id=actor.id)
+        if existing >= self._max_per_user:
+            raise Conflict(
+                f"draft limit reached "
+                f"(have {existing} of {self._max_per_user}); "
+                "delete an existing draft before creating a new one"
+            )
+        return await self._drafts.create(
+            user_id=actor.id,
+            title=payload.title,
+            payload=payload.payload,
+        )
+
+    async def update(
+        self,
+        *,
+        draft_id: uuid.UUID,
+        actor: User,
+        payload: DraftUpdate,
+    ) -> Draft:
+        draft = await self.get(draft_id=draft_id, actor=actor)
+        if payload.payload is not None:
+            self._enforce_payload_size(payload.payload)
+            draft.payload = payload.payload
+        if payload.title is not None:
+            draft.title = payload.title
+        return await self._drafts.update(draft)
+
+    async def delete(self, *, draft_id: uuid.UUID, actor: User) -> None:
+        draft = await self.get(draft_id=draft_id, actor=actor)
+        await self._drafts.delete(draft)
+
+    async def upsert_active(
+        self, *, actor: User, payload: DraftUpdate
+    ) -> Draft:
+        """Convenience for the simple-autosave UX: replace the caller's
+        most-recently-updated draft, or create a new one if they have
+        none.
+
+        Use this when the frontend doesn't want to track ids. Multi-draft
+        callers should use :meth:`create` and :meth:`update` directly so
+        they always know which draft is being written.
+
+        Behaviour:
+        - 0 drafts: create one with the given title (or null) and payload
+          (or empty dict). Subject to the 10-per-user cap.
+        - 1+ drafts: update the most-recent (by ``updated_at``); same
+          partial-update semantics as :meth:`update` (omit a field to
+          leave it alone).
+        """
+
+        rows, _ = await self._drafts.list_for_user(
+            user_id=actor.id, limit=1, offset=0
+        )
+        if not rows:
+            create_payload = DraftCreate(
+                title=payload.title,
+                payload=payload.payload or {},
+            )
+            return await self.create(actor=actor, payload=create_payload)
+
+        draft = rows[0]
+        if payload.payload is not None:
+            self._enforce_payload_size(payload.payload)
+            draft.payload = payload.payload
+        if payload.title is not None:
+            draft.title = payload.title
+        return await self._drafts.update(draft)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _enforce_payload_size(self, payload: dict[str, object]) -> None:
         encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         if len(encoded) > self._max_bytes:
             raise PayloadTooLarge(
                 f"draft exceeds {self._max_bytes} bytes (got {len(encoded)})"
             )
-        actor.draft = payload
-        actor.draft_updated_at = datetime.now(UTC)
-        await self._users.update(actor)
-        assert actor.draft_updated_at is not None
-        return actor.draft, actor.draft_updated_at
-
-    async def clear(self, *, actor: User) -> None:
-        actor.draft = None
-        actor.draft_updated_at = None
-        await self._users.update(actor)

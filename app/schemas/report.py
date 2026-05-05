@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -121,18 +120,3 @@ class ReportSummaryRead(BaseModel):
 class ReportListRead(BaseModel):
     items: list[ReportSummaryRead]
     total: int
-
-
-class DraftWrite(BaseModel):
-    """Per-user in-progress draft. Free-form JSON body so the frontend can
-    save partial form state at any granularity. Server enforces a byte
-    cap on the serialized payload."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class DraftRead(BaseModel):
-    payload: dict[str, Any] | None = None
-    updated_at: datetime | None = None

@@ -6,6 +6,7 @@ them.
 """
 
 from app.models.audit_log import AuditLog
+from app.models.draft import Draft
 from app.models.organisation import Organisation
 from app.models.refresh_token import RefreshToken
 from app.models.report import Report
@@ -14,6 +15,7 @@ from app.models.user import User, UserRole
 
 __all__ = [
     "AuditLog",
+    "Draft",
     "Organisation",
     "RefreshToken",
     "Report",

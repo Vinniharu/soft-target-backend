@@ -334,65 +334,21 @@ Soft-delete a report. Allowed for the `org_owner` of the report's organisation a
 
 ---
 
-#### `GET /api/v1/reports/draft`
+### Drafts (multi-draft, per user)
 
-Fetch the **current user's** in-progress draft. Each user has at most one draft. Use this for power-outage / browser-crash recovery: the frontend autosaves to this endpoint, then re-loads the draft on app boot.
+Drafts are first-class records as of release 0005 — each user can keep up to **10 drafts** in flight, listed and managed under the `/api/v1/reports/drafts` namespace. The legacy single-draft routes at `/api/v1/reports/draft` (singular) have been removed.
 
-**Response 200**
-```json
-{
-  "payload": {
-    "case_id": "CASE-2026-0001",
-    "payload": {
-      "primary_target": { "name": "Subject A", "imei_numbers": [] },
-      "soft_targets": [],
-      "summary": null
-    }
-  },
-  "updated_at": "2026-04-17T10:15:32.481Z"
-}
-```
+The five endpoints (`GET`, `POST`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`) and their full request / response shapes are documented in **`DRAFTS_UPDATE.md`** at the repo root. That doc is the canonical reference for the drafting feature; treat it as an addendum to this file.
 
-If no draft exists:
-```json
-{ "payload": null, "updated_at": null }
-```
+In short:
+- `GET /api/v1/reports/drafts` — list summaries (no payload).
+- `POST /api/v1/reports/drafts` — create. Body: `{ title?, payload }`. 11th draft → `409`.
+- `PUT /api/v1/reports/drafts` *(no id)* — singleton-autosave shortcut: upserts on the most-recent draft (creates one if none exists). Same body as `PUT /{id}`.
+- `GET /api/v1/reports/drafts/{id}` — full draft (with payload).
+- `PUT /api/v1/reports/drafts/{id}` — full replace for a specific draft.
+- `DELETE /api/v1/reports/drafts/{id}` — hard delete.
 
-The `payload` shape is **whatever the frontend last PUT** — there is no schema validation on the contents. The recommended convention is to mirror the `POST /reports` request body (`{ case_id, payload }`) so promoting a draft to a real report is a copy-paste, but that's a frontend convention, not a server requirement.
-
----
-
-#### `PUT /api/v1/reports/draft`
-
-Replace the current user's draft. Idempotent — call as often as you like (debounced autosave is fine). The server stamps `updated_at`.
-
-**Request**
-```json
-{
-  "payload": {
-    "case_id": "CASE-2026-0001",
-    "payload": {
-      "primary_target": { "name": "Subject A" }
-    }
-  }
-}
-```
-
-`payload` may be any JSON object (including `{}`). Cap: **256 KB** of serialized JSON. Bodies over the cap return `413`.
-
-**Response 200** — same shape as `GET /reports/draft`, with the saved payload echoed back and a fresh `updated_at`.
-
-**Errors**
-- `413` — draft body exceeds the size cap
-- `422` — request body is not a valid JSON object under the `payload` key
-
----
-
-#### `DELETE /api/v1/reports/draft`
-
-Clear the current user's draft. Call this after the frontend successfully `POST`s the draft as a real report.
-
-**Response** — 204 No Content. Idempotent — calling twice is fine.
+Caps: 256 KB of serialized JSON per draft (`413` over), 10 drafts per user (`409` on the 11th create). Cross-user access by id returns `404` to avoid leaking ids.
 
 ---
 

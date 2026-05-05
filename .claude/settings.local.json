@@ -7,7 +7,10 @@
       "Bash(python -m compileall -q app tests alembic/versions)",
       "Bash(python -m compileall -q app)",
       "Bash(ls *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(xargs grep -l \"draft\")",
+      "Bash(Get-ChildItem -Path \"app\\\\api\\\\v1\\\\endpoints\" -Filter \"*.py\")",
+      "Bash(Select-Object Name)"
     ]
   }
 }

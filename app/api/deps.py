@@ -21,6 +21,7 @@ from app.core.rate_limit import SlidingWindowRateLimiter
 from app.core.security import TokenError, decode_access_token
 from app.models.user import User, UserRole
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.draft_repo import DraftRepository
 from app.repositories.errors import NotFoundError
 from app.repositories.organisation_repo import OrganisationRepository
 from app.repositories.refresh_token_repo import RefreshTokenRepository
@@ -94,6 +95,10 @@ def get_organisation_repo(session: SessionDep) -> OrganisationRepository:
     return OrganisationRepository(session)
 
 
+def get_draft_repo(session: SessionDep) -> DraftRepository:
+    return DraftRepository(session)
+
+
 def get_user_service(
     settings: SettingsDep,
     users: Annotated[UserRepository, Depends(get_user_repo)],
@@ -123,9 +128,9 @@ def get_report_service(
 
 
 def get_draft_service(
-    users: Annotated[UserRepository, Depends(get_user_repo)],
+    drafts: Annotated[DraftRepository, Depends(get_draft_repo)],
 ) -> DraftService:
-    return DraftService(users=users)
+    return DraftService(drafts=drafts)
 
 
 def get_organisation_service(
